@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { isAuthorizedAdminWallet, readConnectedAdminWalletAddress } from "@/lib/admin-wallet";
 
 const navItems = [
   { label: "Dashboard", href: "/admin", icon: "⊞" },
@@ -77,8 +78,58 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [checkingWallet, setCheckingWallet] = useState(true);
+  const router = useRouter();
+  const pathname = usePathname();
+  const isLoginRoute = pathname === "/admin/login";
+
+  useEffect(() => {
+    if (isLoginRoute) {
+      setCheckingWallet(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function verifyAdminWallet() {
+      setCheckingWallet(true);
+      const address = await readConnectedAdminWalletAddress();
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!isAuthorizedAdminWallet(address)) {
+        await fetch("/api/admin/auth", { method: "DELETE" }).catch(() => undefined);
+        router.replace("/admin/login");
+        return;
+      }
+
+      setWalletAddress(address);
+      setCheckingWallet(false);
+    }
+
+    void verifyAdminWallet();
+
+    const handleFocus = () => {
+      void verifyAdminWallet();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
+    };
+  }, [isLoginRoute, router]);
+
   useEffect(() => setMounted(true), []);
   if (!mounted) return null;
+  if (isLoginRoute) return <>{children}</>;
+  if (checkingWallet) return null;
 
   return (
     <div className="min-h-screen bg-[#080810]">
@@ -88,9 +139,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(8,8,20,0.8)", backdropFilter: "blur(12px)" }}>
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs text-white/30">Admin · Connected</span>
+            <span className="text-xs text-white/30">Admin · {walletAddress ? "Connected" : "Locked"}</span>
           </div>
-          <span className="text-xs text-white/20 font-mono">0x8bc4...711fa</span>
+          <span className="text-xs text-white/20 font-mono">{walletAddress ?? "wallet not connected"}</span>
         </header>
         <div className="p-6">{children}</div>
       </main>

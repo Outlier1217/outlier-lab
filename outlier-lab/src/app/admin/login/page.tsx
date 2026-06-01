@@ -1,21 +1,22 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getWallets } from "@wallet-standard/app";
-
-const ADMIN_WALLET = "0x8bc4555d0f1c8365fd377e9823f993b59b90b62e5eb375db084112f2e29711fa";
+import { isAuthorizedAdminWallet, requestAdminWalletConnection } from "@/lib/admin-wallet";
 
 export default function AdminLogin() {
   const [status, setStatus] = useState<"idle" | "connecting" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [connectedAddress, setConnectedAddress] = useState("");
   const router = useRouter();
 
   async function verifyAndLogin(address: string) {
-    if (address.toLowerCase() !== ADMIN_WALLET.toLowerCase()) {
+    if (!isAuthorizedAdminWallet(address)) {
       setErrorMsg("Unauthorized wallet. Access denied.");
       setStatus("error");
       return;
     }
+
+    setConnectedAddress(address);
     const res = await fetch("/api/admin/auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -34,57 +35,15 @@ async function connectSlush() {
   setStatus("connecting");
   setErrorMsg("");
 
-  const normalizeAddress = (value: string) => value.trim().toLowerCase();
-
   try {
-    const walletApi = getWallets();
-    const registeredWallets = walletApi.get();
+    const address = await requestAdminWalletConnection();
 
-    const slushWallet = registeredWallets.find((wallet) => {
-      const typedWallet = wallet as any;
-      const name = typedWallet.name?.toLowerCase() ?? "";
-      const id = typedWallet.id?.toLowerCase() ?? "";
-      return name.includes("slush") || name.includes("sui") || id.includes("slush") || id.includes("sui");
-    });
-
-    if (slushWallet) {
-      const connect = (slushWallet as any).features?.["standard:connect"]?.connect;
-      const result = await connect?.();
-      const address = result?.accounts?.[0]?.address ?? (slushWallet as any).accounts?.[0]?.address;
-
-      if (address) {
-        await verifyAndLogin(address);
-        return;
-      }
+    if (address) {
+      await verifyAndLogin(address);
+      return;
     }
 
-    const win = window as any;
-    const directWallet = win.slush ?? win.suiWallet ?? win.sui ?? win.__slush__ ?? win.Slush;
-
-    if (directWallet) {
-      await directWallet.requestPermissions?.({ permissions: ["viewAccount"] });
-      await directWallet.requestPermissions?.();
-
-      const accounts = await directWallet.getAccounts?.();
-      const address = Array.isArray(accounts) ? accounts[0] : accounts?.[0]?.address;
-
-      if (address) {
-        await verifyAndLogin(normalizeAddress(address));
-        return;
-      }
-    }
-
-    const availableWallets = registeredWallets
-      .map((wallet) => {
-        const typedWallet = wallet as any;
-        return typedWallet.name || typedWallet.id;
-      })
-      .filter(Boolean);
-    setErrorMsg(
-      availableWallets.length
-        ? `Slush is detected, but it has no accessible account yet. Available wallets: ${availableWallets.join(", ")}. Unlock the extension and try again.`
-        : "Wallet not detected. Install or unlock the Slush extension in Chrome, then refresh this page."
-    );
+    setErrorMsg("Wallet approval was cancelled or no account was returned. Try connecting the Slush wallet again.");
     setStatus("error");
   } catch (e: any) {
     setErrorMsg("Error: " + (e?.message ?? String(e)));
@@ -121,6 +80,13 @@ async function connectSlush() {
               Connect your <span className="font-semibold text-white">Slush wallet</span> to verify admin identity. Only the authorized wallet can access this panel.
             </p>
           </div>
+
+          {connectedAddress && (
+            <div className="mb-5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-300/70 mb-1">Connected wallet</p>
+              <p className="text-sm text-emerald-200 font-mono break-all">{connectedAddress}</p>
+            </div>
+          )}
 
           {/* Error */}
           {status === "error" && (
