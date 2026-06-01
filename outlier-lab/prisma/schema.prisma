@@ -1,0 +1,418 @@
+// prisma/schema.prisma
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// AUTH MODELS (NextAuth / Auth.js standard)
+// ─────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  username      String?   @unique
+  bio           String?
+  role          UserRole  @default(USER)
+
+  // Web3
+  walletAddress String?   @unique
+  walletChain   String?   // "ethereum", "solana", etc.
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  accounts   Account[]
+  sessions   Session[]
+  bookmarks  Bookmark[]
+  comments   Comment[]
+  testResults MockTestResult[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─────────────────────────────────────────────
+// CATEGORIES / TOPICS
+// ─────────────────────────────────────────────
+
+model Category {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  icon        String? // emoji or icon name
+  color       String? // hex color for UI
+  coverImage  String?
+  isActive    Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  posts   Post[]
+  courses Course[]
+
+  @@map("categories")
+}
+
+// ─────────────────────────────────────────────
+// CONTENT: Stories, Blogs, Articles
+// ─────────────────────────────────────────────
+
+model Post {
+  id          String      @id @default(cuid())
+  title       String
+  slug        String      @unique
+  excerpt     String?     @db.Text
+  content     String      @db.Text // TipTap JSON or HTML
+  thumbnail   String?     // UploadThing URL
+  type        PostType    @default(BLOG)
+  status      PostStatus  @default(DRAFT)
+  featured    Boolean     @default(false)
+  readingTime Int?        // minutes, auto-calculated
+  viewCount   Int         @default(0)
+  likeCount   Int         @default(0)
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  // Timestamps
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  tags       Tag[]    @relation("PostTags")
+  bookmarks  Bookmark[]
+  comments   Comment[]
+
+  @@index([type, status])
+  @@index([slug])
+  @@map("posts")
+}
+
+model Tag {
+  id    String @id @default(cuid())
+  name  String @unique
+  slug  String @unique
+  color String?
+
+  posts   Post[]   @relation("PostTags")
+  courses Course[] @relation("CourseTags")
+
+  @@map("tags")
+}
+
+// ─────────────────────────────────────────────
+// COURSES (YouTube Embedded)
+// ─────────────────────────────────────────────
+
+model Course {
+  id          String       @id @default(cuid())
+  title       String
+  slug        String       @unique
+  description String       @db.Text
+  thumbnail   String?
+  youtubeUrl  String?      // Single video URL
+  playlistUrl String?      // YouTube playlist URL
+  youtubeId   String?      // Extracted YT video/playlist ID
+  duration    String?      // "4h 30m"
+  level       CourseLevel  @default(BEGINNER)
+  language    String       @default("Hindi")
+  status      PostStatus   @default(DRAFT)
+  isFree      Boolean      @default(true)
+  featured    Boolean      @default(false)
+  sortOrder   Int          @default(0)
+  viewCount   Int          @default(0)
+  enrollCount Int          @default(0)
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  tags       Tag[]    @relation("CourseTags")
+  lessons    Lesson[]
+  bookmarks  Bookmark[]
+  comments   Comment[]
+
+  @@index([status])
+  @@map("courses")
+}
+
+model Lesson {
+  id          String  @id @default(cuid())
+  title       String
+  description String? @db.Text
+  youtubeUrl  String
+  youtubeId   String?
+  duration    String? // "12:34"
+  sortOrder   Int     @default(0)
+  isFree      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  courseId String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, sortOrder])
+  @@map("lessons")
+}
+
+// ─────────────────────────────────────────────
+// MOCK TESTS
+// ─────────────────────────────────────────────
+
+model MockTest {
+  id          String         @id @default(cuid())
+  title       String
+  slug        String         @unique
+  description String?        @db.Text
+  thumbnail   String?
+  type        MockTestType   @default(CUSTOM)
+  duration    Int            @default(60)  // minutes
+  totalMarks  Int            @default(100)
+  passMarks   Int            @default(40)
+  difficulty  Difficulty     @default(MEDIUM)
+  isActive    Boolean        @default(true)
+  featured    Boolean        @default(false)
+  attemptCount Int           @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  questions Question[]
+  results   MockTestResult[]
+  bookmarks Bookmark[]
+
+  @@map("mock_tests")
+}
+
+model Question {
+  id            String       @id @default(cuid())
+  questionText  String       @db.Text
+  explanation   String?      @db.Text
+  type          QuestionType @default(MCQ)
+  options       Json         // Array of { id, text, isCorrect }
+  correctAnswer String       // option id or text
+  marks         Int          @default(1)
+  negativeMarks Float        @default(0)
+  sortOrder     Int          @default(0)
+  difficulty    Difficulty   @default(MEDIUM)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  mockTestId String
+  mockTest   MockTest @relation(fields: [mockTestId], references: [id], onDelete: Cascade)
+
+  @@index([mockTestId])
+  @@map("questions")
+}
+
+model MockTestResult {
+  id          String   @id @default(cuid())
+  score       Int
+  totalMarks  Int
+  percentage  Float
+  timeTaken   Int      // seconds
+  answers     Json     // { questionId: selectedOptionId }
+  passed      Boolean
+
+  createdAt DateTime @default(now())
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mockTestId String
+  mockTest   MockTest @relation(fields: [mockTestId], references: [id], onDelete: Cascade)
+
+  @@index([userId, mockTestId])
+  @@map("mock_test_results")
+}
+
+// ─────────────────────────────────────────────
+// BOOKMARKS
+// ─────────────────────────────────────────────
+
+model Bookmark {
+  id           String       @id @default(cuid())
+  contentType  ContentType
+  createdAt    DateTime     @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Polymorphic: only one will be set
+  postId     String?
+  post       Post?     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  courseId   String?
+  course     Course?   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  mockTestId String?
+  mockTest   MockTest? @relation(fields: [mockTestId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@unique([userId, courseId])
+  @@unique([userId, mockTestId])
+  @@map("bookmarks")
+}
+
+// ─────────────────────────────────────────────
+// COMMENTS
+// ─────────────────────────────────────────────
+
+model Comment {
+  id      String  @id @default(cuid())
+  content String  @db.Text
+  isApproved Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  postId   String?
+  post     Post?   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  // Self-referential for replies
+  parentId String?
+  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies  Comment[] @relation("CommentReplies")
+
+  @@map("comments")
+}
+
+// ─────────────────────────────────────────────
+// SITE SETTINGS (Admin configurable)
+// ─────────────────────────────────────────────
+
+model SiteSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String @db.Text
+  type  String @default("string") // string, json, boolean, number
+
+  updatedAt DateTime @updatedAt
+
+  @@map("site_settings")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum PostType {
+  STORY
+  BLOG
+  ARTICLE
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum MockTestType {
+  NISM
+  NCFM
+  WEB3
+  DEFI
+  PYTHON
+  CUSTOM
+}
+
+enum QuestionType {
+  MCQ
+  TRUE_FALSE
+  MULTI_SELECT
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ContentType {
+  POST
+  COURSE
+  MOCK_TEST
+}
